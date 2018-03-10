@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>GeoJson interactive map</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        canvas {
+            border: 1px solid black;
+            display: block;
+            margin: auto;
+        }
+
+        ;
+    </style>
+</head>
+
+<body>
+    <script>
+        // Used to generate colors
+        let i = 0;
+        // Adjust the map size to the window size
+        const MAP_SIZE = Math.min(window.parent.window.innerHeight, window.parent.window.innerWidth);
+        // Set the projection Radius, force the diameter to be equal to map size.
+        const R = MAP_SIZE / (2 * Math.PI);
+        // Diameter of the globe
+        const D = R * 2 * Math.PI;
+        const MAX_LATITUDE = 85.0511287798;
+        // Create a canvas element
+        const canvas = document.createElement('canvas');
+        const MIN_ZOOM = 0;
+        const MAX_ZOOM = 20;
+        // Set canvas size
+        canvas.width = MAP_SIZE;
+        canvas.height = MAP_SIZE;
+        // Add the canvas to the DOM
+        document.body.appendChild(canvas);
+        // Save a drawing context into the map variable
+        const map = canvas.getContext('2d');
+        // "Public" zoom
+        Z = 2;
+        // "Public" center
+        let center = [0, 0];
+        // Keep real inside c
+        let c = _project(center);
+
+        fetch('world.json')
+            .then(response => response.json())
+            .then(data => {
+                drawGeoJson(data);
+                getUserInput(canvas, (dx, dy, dz) => {
+                    if (dz > 0) {
+                        if (Z !== MAX_ZOOM) {
+                            Z++;
+                            c = _project(_unproject(c));
+                        }
+                    }
+                    if (dz < 0) {
+                        if (Z !== MIN_ZOOM) {
+                            Z--;
+                            c = _project(_unproject(c));
+                        }
+                    }
+                    if (dz === 0) {
+
+                        if (Z < 2) {
+                            c.x = c.x - (dx);
+                            c.y = c.y - (dy);
+                        }
+                        if (Z === 2) {
+                            c.x = c.x - (dx / 3);
+                            c.y = c.y - (dy / 3);
+                        }
+                        if (Z > 2) {
+                            c.x = c.x - (dx / Math.pow(2, Z));
+                            c.y = c.y - (dy / Math.pow(2, Z));
+                        }
+
+                    }
+                    drawGeoJson(data);
+                })
+            });
+
+        /**
+          * Draw a geoJson object, it only supports polygons and MultiPolygons
+          */
+        function drawGeoJson(geoJsonData) {
+            map.fillStyle = 'aliceblue';
+            map.fillRect(0, 0, canvas.width, canvas.height);
+            geoJsonData.features.forEach(feature => {
+                if (feature.geometry.type === 'Polygon') {
+                    drawPolygon(map, feature.geometry.coordinates[0]);
+                }
+                if (feature.geometry.type === 'MultiPolygon') {
+                    feature.geometry.coordinates.forEach(coords => drawPolygon(map, coords[0]));
+                }
+                if (feature.geometry.type === 'LineString') {
+                    drawLine(map, feature.geometry.coordinates);
+                }
+            });
+        }
+
+        /**
+         * Given a list of coordinates, draw into a rendering context a polygon.
+         */
+        function drawPolygon(ctx, coords) {
+            const coordinates = coords.map(x => x);
+            const initialPoint = project(coordinates.shift());
+            ctx.fillStyle = getColor();
+            ctx.beginPath();
+            ctx.moveTo(initialPoint.x, initialPoint.y);
+            coordinates.map(project).forEach(point => ctx.lineTo(point.x, point.y));
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        /**
+       * Given a list of coordinates, draw into a rendering context a polygon.
+       */
+        function drawLine(ctx, coords) {
+            const coordinates = coords.map(x => x);
+            ctx.strokeStyle = 'black';
+            ctx.beginPath();
+            const initialPoint = project(coordinates.shift());
+            ctx.moveTo(initialPoint.x, initialPoint.y);
+            coordinates.map(project).forEach(point => ctx.lineTo(point.x, point.y));
+            ctx.stroke();
+        }
+
+        // Proyecta un punto teniendo en cuenta centro y escala
+        function project(point) {
+            const SCALE = Math.pow(2, Z);
+            const p = _project(point);
+            const cx = c.x - (c.x / SCALE);
+            const cy = c.y - (c.y / SCALE);
+            return {
+                x: (p.x - cx) * SCALE,
+                y: (p.y - cy) * SCALE
+            }
+        }
+
+        function _project([lon, lat]) {
+            let { x, y } = __project([lon, lat]);
+
+            x = D / 2 + x;
+            y = D - (D / 2) - y;
+
+            return { x, y }
+        }
+
+        function __project([lon, lat]) {
+            const sinlat = Math.sin(lat * Math.PI / 180.0);
+
+            const x = D * lon / 360.0;
+            const y = R / 2 * Math.log((1 + sinlat) / (1 - sinlat));
+
+            return { x, y }
+        }
+
+        function _unproject(point) {
+            point.x = point.x - D / 2;
+            point.y = D - (D / 2) - point.y;
+
+            return __unproject(point);
+        }
+
+        /**
+         *  Inverse transform pixel to latlon
+         */
+        function __unproject(point) {
+            var d = 180 / Math.PI;
+            const lon = (point.x * 360) / D;
+            const lat = (2 * Math.atan(Math.exp(point.y / R)) - (Math.PI / 2)) * d;
+            return [lon, lat];
+        }
+
+        /**
+         * Generate a color
+         */
+        function getColor() {
+            return 'green'; //`rgb(${i++ % 255}, ${180}, ${255})`;
+        }
+
+        function getUserInput(canvas, callback) {
+            var dragging = false;
+            var xo, yo;
+
+            canvas.addEventListener('mousedown', e => {
+                dragging = true
+                xo = e.clientX
+                yo = e.clientY
+            }, { passive: false });
+
+            canvas.addEventListener('mouseup', () => {
+                dragging = false;
+            }, { passive: false });
+
+            canvas.addEventListener('mousemove', e => {
+                if (dragging) {
+                    let [dx, dy] = [e.clientX - xo, e.clientY - yo]
+                    callback(dx, dy, 0)
+                    xo = e.clientX
+                    yo = e.clientY
+                }
+                return false;
+            }, { passive: false });
+
+            canvas.addEventListener('wheel', e => {
+                dragging = false;
+                e.preventDefault();
+                if (Math.abs(e.deltaY) < 2) {
+                    return;
+                }
+                callback(0, 0, e.deltaY > 0 ? 1 : -1)
+            }, { passive: false });
+
+            canvas.addEventListener('dblclick', () => {
+                dragging = false;
+                callback(0, 0, 1)
+            }, { passive: false });
+        }
+    </script>
+</body>
+
+</html>
